@@ -1,5 +1,7 @@
 #include "Downloader.h"
 
+#include "FileWriter.h"
+
 #include <QNetworkAccessManager>
 #include <QEventLoop>
 #include <QNetworkReply>
@@ -71,6 +73,7 @@ void Downloader::singleDownload(const QString &url, const qint64 length, const Q
     auto cost = time.elapsed();
     qWarning() << "cost" << cost;
 }
+
 void Downloader::mulitDownload(const QString &url, const qint64 length, const QString &filePath, const int CPUCount)
 {
     QFile file(filePath);
@@ -86,11 +89,7 @@ void Downloader::mulitDownload(const QString &url, const qint64 length, const QS
     qWarning() << "resize" << ok << file.size();
     ok = file.setPermissions(QFileDevice::ReadUser | QFileDevice::WriteUser | QFileDevice::ReadGroup | QFileDevice::WriteGroup);
     qWarning() << "set permission " << ok;
-    uchar *pData = file.map(0, length);
-    if (!pData) {
-        qWarning() << "map failed" << file.errorString();
-        return;
-    }
+    FileWriter fileWriter(&file);
 
     QTime time;
     time.start();
@@ -103,9 +102,9 @@ void Downloader::mulitDownload(const QString &url, const qint64 length, const QS
     }
     //余数部分加入最后一个
     vec[CPUCount -1].second += length % CPUCount;
-
+    qWarning() << "main thread" << QThread::currentThreadId();
     auto mapCaller = [&](const QPair<qlonglong, qlonglong> &pair) ->qlonglong{
-        qWarning() << "lambda start" << pair.first << pair.second;
+        qWarning() << "lambda start" << pair.first << pair.second << QThread::currentThreadId();
         QNetworkAccessManager mgr;
         QNetworkRequest req;
         req.setUrl(url);
@@ -116,31 +115,37 @@ void Downloader::mulitDownload(const QString &url, const qint64 length, const QS
         const qint64 bufSize = 1024 * 32;
         QByteArray data(bufSize, 0);
         connect(reply, &QNetworkReply::readyRead, this, [&](){
+            auto d = reply->readAll();
+            qint64 realSize =fileWriter.writeTo(hasWritePos, d);
+            hasWritePos += realSize;
 //            qint64 realSize = 0;
 //            do {
 //                realSize = reply->read(data.data(), bufSize);
 //                if (realSize <= 0) {
 //                    break;
 //                }
-//                memcpy(pData + hasWritePos, data.data(), realSize);
-//                hasWritePos += realSize;
+//                hasWritePos += fileWriter.writeToWithoutMutex(hasWritePos, data.data(), realSize);
 //            } while (realSize);
 
-//            auto d = reply->readAll();
-//            memcpy(pData + hasWritePos, d.data(), d.size());
+//            file.seek(hasWritePos);
+//            file.write(d);
+//            file.flush();
 //            hasWritePos += d.size();
 
-            qint64 realSize = 0;
-            do {
-                realSize = reply->read((char *)pData + hasWritePos, bufSize);
-                if (realSize <= 0) {
-                    break;
-                }
-                hasWritePos += realSize;
-            } while (realSize);
-
-        });
+//            qint64 realSize = 0;
+//            do {
+//                realSize = reply->read((char *)pData + hasWritePos, bufSize);
+//                if (realSize <= 0) {
+//                    break;
+//                }
+//                hasWritePos += realSize;
+//            } while (realSize);
+        }, Qt::DirectConnection);
         QEventLoop event;
+        connect(reply, QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::error), reply, [&]{
+            qWarning() << u8"出错" << reply->errorString();
+            event.quit();
+        });
         connect(reply, &QNetworkReply::finished, &event, &QEventLoop::quit);
         event.exec();
         qWarning() << "lambda " << hasWritePos - pair.first;
@@ -158,7 +163,6 @@ void Downloader::mulitDownload(const QString &url, const qint64 length, const QS
         qWarning() << "not finished, wait";
         loop.exec();
     }
-    file.unmap(pData);
     file.close();
     auto cost = time.elapsed();
     qWarning() << "end cost" << cost;

@@ -32,6 +32,7 @@ Window {
                 selectByMouse: true
                 focus: true
                 text: "http://download.qt.io/linguist_releases/qtlinguistinstaller-5.12.2.exe"
+//                text: "http://download.qt.io/official_releases/qt/5.12/5.12.4/single/qt-everywhere-src-5.12.4.tar.xz";
             }
         }
         Row {
@@ -47,7 +48,7 @@ Window {
             }
             ComboBox {
                 id: comboBox
-                model:[1, 2, 3, 4, 5, 6]
+                model:[1, 2, 3, 4, 5]
                 width: 80
                 height: parent.height
             }
